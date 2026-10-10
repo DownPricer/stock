@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum MovementType {
+  RECEPTION
+  MISE_EN_VENTE
+  RETRAIT_VENTE
+  VENTE
+  AJUSTEMENT
+  PERTE
+}
+
+model Bag {
+  id                 String     @id @default(cuid())
+  name               String
+  photoPath          String?
+  colorVariant       String?
+  purchasePrice      Float
+  targetPrice        Float
+  quantityOnHand     Int        @default(0)
+  lowStockThreshold  Int        @default(1)
+  notes              String?
+  archivedAt         DateTime?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  listings           Listing[]
+  movements          Movement[]
+}
+
+model Account {
+  id                 String     @id @default(cuid())
+  name               String
+  platform           String?
+  color              String     @default("#64748b")
+  commissionPercent  Float?
+  archivedAt         DateTime?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  listings           Listing[]
+  movements          Movement[]
+}
+
+model Listing {
+  id         String   @id @default(cuid())
+  bagId      String
+  accountId  String
+  quantity   Int      @default(0)
+  updatedAt  DateTime @updatedAt
+  bag        Bag      @relation(fields: [bagId], references: [id], onDelete: Cascade)
+  account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([bagId, accountId])
+}
+
+model Movement {
+  id                String       @id @default(cuid())
+  type              MovementType
+  bagId             String
+  accountId         String?
+  quantity          Int
+  unitPrice         Float?
+  note              String?
+  createdAt         DateTime     @default(now())
+  undoneAt          DateTime?
+  undoesMovementId  String?      @unique
+  bag               Bag          @relation(fields: [bagId], references: [id], onDelete: Cascade)
+  account           Account?     @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  undoesMovement    Movement?    @relation("UndoPair", fields: [undoesMovementId], references: [id])
+  undoneBy          Movement?    @relation("UndoPair")
+}

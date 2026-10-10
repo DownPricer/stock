@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /login
+Disallow: /bags
+Disallow: /accounts
+Disallow: /api
+Disallow: /$
