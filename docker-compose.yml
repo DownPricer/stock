@@ -1,0 +1,20 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fastbag-web
+    restart: unless-stopped
+    env_file:
+      - .env
+    expose:
+      - "3000"
+    volumes:
+      - /opt/fastbag-data:/data
+    networks:
+      - downpricer_net
+
+networks:
+  downpricer_net:
+    name: downpricer_downpricer-network
+    external: true
