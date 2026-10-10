@@ -55,3 +55,7 @@ next-env.d.ts
 # OS / IDE
 .idea/
 .vscode/
+
+# extraits temporaires / outils locaux
+.tmp-*
+scripts/scan-pdfs.py

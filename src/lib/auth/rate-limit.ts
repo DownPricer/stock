@@ -5,11 +5,21 @@ const attempts = new Map<string, Entry>();
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 
+function purgeExpired(now: number) {
+  for (const [key, entry] of attempts) {
+    if (now >= entry.resetAt) {
+      attempts.delete(key);
+    }
+  }
+}
+
 export function checkLoginRateLimit(ip: string): {
   ok: boolean;
   retryAfterSec?: number;
 } {
   const now = Date.now();
+  purgeExpired(now);
+
   const entry = attempts.get(ip);
 
   if (!entry || now >= entry.resetAt) {

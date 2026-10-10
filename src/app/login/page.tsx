@@ -12,6 +12,15 @@ import {
 } from "@/components/icons";
 import { useTheme } from "@/components/ThemeProvider";
 
+/** N'accepte que les chemins internes (anti open-redirect). */
+function safeNextPath(raw: string | null): string {
+  if (!raw) return "/";
+  if (!raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) {
+    return "/";
+  }
+  return raw;
+}
+
 function LoginForm() {
   const router = useRouter();
   const search = useSearchParams();
@@ -36,7 +45,7 @@ function LoginForm() {
         setError(data.error || "Connexion impossible");
         return;
       }
-      const next = search.get("next") || "/";
+      const next = safeNextPath(search.get("next"));
       router.replace(next);
       window.location.href = next;
     } finally {

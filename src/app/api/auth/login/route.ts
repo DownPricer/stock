@@ -15,10 +15,11 @@ const bodySchema = z.object({
 });
 
 function clientIp(request: Request): string {
+  // X-Real-IP est posé par notre Nginx ; X-Forwarded-For peut être falsifié par le client.
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  if (realIp) return realIp;
   return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown"
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown"
   );
 }
 

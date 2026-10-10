@@ -50,6 +50,9 @@ ls -la /opt/downpricer/nginx/conf.d
 ls -la /opt/downpricer/nginx/ssl
 docker exec downpricer-nginx nginx -t
 docker exec downpricer-nginx nginx -T 2>/dev/null | grep -E 'server_name|listen ' | head -n 60
+
+echo "=== Certificats Let's Encrypt (hôte) ==="
+sudo certbot certificates
 ```
 
 **Si la RAM libre est faible** (souvent &lt; 1 Go disponible) : construis l’image **en local** (PC), exporte-la, et importe-la sur le VPS au lieu de `docker compose up -d --build` sur le serveur.
@@ -60,8 +63,9 @@ docker build -t fastbag-web:latest .
 docker save fastbag-web:latest | gzip > fastbag-web.tar.gz
 # Transfert vers le VPS (scp), puis sur le VPS :
 gunzip -c fastbag-web.tar.gz | docker load
-# Dans docker-compose.yml tu peux alors utiliser image: fastbag-web:latest
-# et lancer : docker compose up -d   (sans --build)
+# L'image s'appelle déjà fastbag-web — pas besoin de modifier le compose :
+cd /opt/fastbag
+docker compose up -d --no-build
 ```
 
 ---
@@ -95,27 +99,29 @@ cp .env.example .env
 nano .env
 ```
 
-Dans `.env` (valeurs **réelles**, jamais `changeme`) :
+### Hash du mot de passe — générer sur ton PC
+
+Dans le dossier du projet **sur ton PC** (où `bcryptjs` est déjà installé via `npm install`) :
+
+```bash
+node -e "require('bcryptjs').hash(process.argv[1],10).then(console.log)" "TON_MOT_DE_PASSE"
+```
+
+Copie le hash affiché (commence par `$2b$10$`, ~60 caractères) dans le `.env` du VPS.
+
+### Contenu de `/opt/fastbag/.env` (valeurs réelles, jamais `changeme`)
 
 - `DATABASE_URL="file:/data/db/prod.db"`
 - `UPLOAD_DIR="/data/uploads"`
-- `APP_PASSWORD_HASH=...` (hash bcrypt, chaque `$` échappé en `\$`)
+- `APP_PASSWORD_HASH='...'` — **apostrophes simples, sans antislash**  
+  Exemple : `APP_PASSWORD_HASH='$2b$10$xxxxxxxx...'`  
+  Avec `env_file`, Docker Compose casse la forme `APP_PASSWORD_HASH=\$2b\$10\$...` (résultat type `"\$2b\$10\"`).  
+  L’échappement `\$` ne vaut **que** pour un `.env` local lu par Next.js (dotenv-expand), pas pour le VPS Docker.
 - `SESSION_SECRET=...` (`openssl rand -base64 48`)
 - `NEXT_PUBLIC_APP_URL="https://stock.sitereadyshd.fr"`
 - `NODE_ENV="production"`
 - `PORT=3000`
 - `HOSTNAME=0.0.0.0`
-
-Générer le hash (exemple, sans afficher le mot de passe dans l’historique si tu peux) :
-
-```bash
-cd /opt/fastbag
-# Installer bcryptjs une fois si besoin, ou via conteneur node :
-docker run --rm -v "$PWD":/app -w /app node:20-bookworm-slim \
-  bash -lc 'npm install bcryptjs@3 --no-save && node -e "require(\"bcryptjs\").hash(process.argv[1],10).then(console.log)" "TON_MOT_DE_PASSE"'
-```
-
-Coller le hash dans `.env` en échappant les `$`.
 
 ---
 
@@ -126,6 +132,12 @@ cd /opt/fastbag
 docker compose up -d --build
 docker compose ps
 docker compose logs --tail=80 web
+```
+
+**Vérifier le hash injecté dans le conteneur** (doit faire ~60 caractères et commencer par `$2`) :
+
+```bash
+docker exec fastbag-web printenv APP_PASSWORD_HASH
 ```
 
 **Test obligatoire depuis le conteneur Nginx** (ne passe à la suite que si ça répond) :
@@ -164,43 +176,47 @@ curl -sI -H 'Host: stock.sitereadyshd.fr' http://127.0.0.1/ | head -n 20
 
 ---
 
-## 6. Certificat Let's Encrypt (standalone — section 9 du guide)
+## 6. Certificat Let's Encrypt (certbot **hôte** — section 9 du guide)
 
-Le proxy doit être **arrêté** pendant l’opération (port 80 libre).  
-Prépare tout, puis exécute **ce bloc d’un seul tenant** :
+Certbot tourne **sur l’hôte**, pas dans un conteneur. Rien n’est écrit par certbot dans `/opt/downpricer/nginx/ssl` : on copie **après** depuis `/etc/letsencrypt/live/`.
+
+**Avant la coupure** :
+
+```bash
+dig +short stock.sitereadyshd.fr A
+# doit afficher : 51.210.179.212
+
+sudo certbot certificates
+```
+
+**Bloc d’un seul tenant** (Nginx arrêté seulement le temps de certbot ; on le redémarre tout de suite, succès ou échec) :
 
 ```bash
 DOMAIN=stock.sitereadyshd.fr
-EMAIL=contact@sitereadyshd.fr
 
 docker stop downpricer-nginx
 
-sudo docker run --rm \
-  -p 80:80 \
-  -v /opt/downpricer/nginx/ssl:/etc/letsencrypt \
-  certbot/certbot certonly --standalone \
+sudo certbot certonly --standalone --non-interactive --agree-tos \
   --cert-name "$DOMAIN" \
-  -d "$DOMAIN" \
-  --email "$EMAIL" \
-  --agree-tos \
-  --no-eff-email
+  -d "$DOMAIN"
 
-sudo mkdir -p "/opt/downpricer/nginx/ssl/$DOMAIN"
-sudo cp -L "/opt/downpricer/nginx/ssl/live/$DOMAIN/fullchain.pem" \
-  "/opt/downpricer/nginx/ssl/$DOMAIN/fullchain.pem"
-sudo cp -L "/opt/downpricer/nginx/ssl/live/$DOMAIN/privkey.pem" \
-  "/opt/downpricer/nginx/ssl/$DOMAIN/privkey.pem"
-sudo chmod 640 "/opt/downpricer/nginx/ssl/$DOMAIN/privkey.pem"
-
+# Redémarrer le proxy immédiatement (même si certbot a échoué)
 docker start downpricer-nginx
-docker exec downpricer-nginx nginx -t
-docker exec downpricer-nginx nginx -s reload
 ```
 
-Vérifie les fichiers :
+**Ensuite seulement** — copie vers le dossier lu par Nginx, puis permissions clés :
 
 ```bash
-sudo ls -la /opt/downpricer/nginx/ssl/stock.sitereadyshd.fr/
+DOMAIN=stock.sitereadyshd.fr
+
+sudo mkdir -p "/opt/downpricer/nginx/ssl/$DOMAIN"
+sudo cp -L "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" \
+  "/opt/downpricer/nginx/ssl/$DOMAIN/fullchain.pem"
+sudo cp -L "/etc/letsencrypt/live/$DOMAIN/privkey.pem" \
+  "/opt/downpricer/nginx/ssl/$DOMAIN/privkey.pem"
+sudo chmod 600 "/opt/downpricer/nginx/ssl/$DOMAIN/privkey.pem"
+
+sudo ls -la "/opt/downpricer/nginx/ssl/$DOMAIN/"
 ```
 
 ---
@@ -292,25 +308,28 @@ sudo chmod +x /usr/local/bin/backup-fastbag-data.sh
 
 ---
 
-## 11. Renouvellement du certificat (sync section 6, avant 90 jours)
+## 11. Renouvellement du certificat (avant 90 jours)
 
-Après un renouvellement Certbot (standalone : même principe — arrêter Nginx, `certbot renew` / `certonly`, redémarrer), **resynchroniser** les fichiers utilisés par Nginx :
+Même logique que §6 : certbot **hôte**, Nginx arrêté le temps du renew, redémarrage immédiat, puis copie vers `/opt/downpricer/nginx/ssl/`.
 
 ```bash
 DOMAIN=stock.sitereadyshd.fr
 
+docker stop downpricer-nginx
+sudo certbot renew
+docker start downpricer-nginx
+
 sudo mkdir -p "/opt/downpricer/nginx/ssl/$DOMAIN"
-sudo cp -L "/opt/downpricer/nginx/ssl/live/$DOMAIN/fullchain.pem" \
+sudo cp -L "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" \
   "/opt/downpricer/nginx/ssl/$DOMAIN/fullchain.pem"
-sudo cp -L "/opt/downpricer/nginx/ssl/live/$DOMAIN/privkey.pem" \
+sudo cp -L "/etc/letsencrypt/live/$DOMAIN/privkey.pem" \
   "/opt/downpricer/nginx/ssl/$DOMAIN/privkey.pem"
+sudo chmod 600 "/opt/downpricer/nginx/ssl/$DOMAIN/privkey.pem"
 
 docker exec downpricer-nginx nginx -t
 docker exec downpricer-nginx nginx -s reload
 curl -sI "https://$DOMAIN" | head -n 15
 ```
-
-À refaire **avant 90 jours** (ou après chaque `certbot renew` qui a régénéré le cert).
 
 ---
 

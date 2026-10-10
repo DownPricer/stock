@@ -1,7 +1,23 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth/token";
 
-const PUBLIC_PATHS = ["/login", "/manifest.webmanifest", "/favicon.ico"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/manifest.webmanifest",
+  "/favicon.ico",
+  "/robots.txt",
+];
+
+const STATIC_ROOT_FILES = new Set([
+  "/favicon.ico",
+  "/manifest.webmanifest",
+  "/robots.txt",
+  "/file.svg",
+  "/globe.svg",
+  "/next.svg",
+  "/vercel.svg",
+  "/window.svg",
+]);
 
 function isPublic(pathname: string) {
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
@@ -14,16 +30,23 @@ function isPublic(pathname: string) {
   return false;
 }
 
+/** Assets publics connus uniquement (pas n'importe quel .png / .svg). */
+function isKnownStaticAsset(pathname: string) {
+  if (pathname.startsWith("/_next")) return true;
+  if (STATIC_ROOT_FILES.has(pathname)) return true;
+  if (
+    (pathname.startsWith("/icons/") || pathname.startsWith("/brand/")) &&
+    /\.(png|svg|ico|webp|webmanifest)$/i.test(pathname)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (
-    pathname.startsWith("/_next") ||
-    pathname.endsWith(".png") ||
-    pathname.endsWith(".svg") ||
-    pathname.endsWith(".webmanifest") ||
-    pathname.endsWith(".ico")
-  ) {
+  if (isKnownStaticAsset(pathname)) {
     return NextResponse.next();
   }
 
